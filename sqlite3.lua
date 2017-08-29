@@ -286,6 +286,9 @@ function bind_clib()
   const.TRACE_ROW     = 0x04
   const.TRACE_CLOSE   = 0x08
 
+  -- For C pointers comparison
+  const.NULL = ffi.NULL
+
   -----------------------------------------------------------
   --  Types
   -----------------------------------------------------------
@@ -1314,10 +1317,16 @@ function aux.set_mt_method(t,k,v)
   end
 end
 
-function aux.wrap_string(c_string)
-  if c_string ~= nil then
-    return ffi.string(c_string)
+function aux.is_null(c_ptr)
+  -- Works both for luajit and luaffi
+  return c_ptr == ffi.NULL
+end
+
+function aux.wrap_string(c_str)
+  if not aux.is_null(c_str) then
+    return ffi.string(c_str)
   end
+  return nil
 end
 
 function aux.wrap_bool(c_bool)
