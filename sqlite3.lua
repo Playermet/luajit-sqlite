@@ -1,5 +1,5 @@
 -----------------------------------------------------------
---  Binding for SQLite v3.15.2
+--  Binding for SQLite v3.20.1
 -----------------------------------------------------------
 
 --[[ LICENSE
@@ -226,6 +226,9 @@ function bind_clib()
   const.LIMIT_TRIGGER_DEPTH       = 10
   const.LIMIT_WORKER_THREADS      = 11
 
+  -- Prepare Flags for sqlite3_prepare_v3
+  const.PREPARE_PERSISTENT = 0x01
+
   -- Codes for fundamental types
   const.INTEGER = 1
   const.FLOAT   = 2
@@ -238,6 +241,9 @@ function bind_clib()
   const.STMTSTATUS_SORT          = 2
   const.STMTSTATUS_AUTOINDEX     = 3
   const.STMTSTATUS_VM_STEP       = 4
+  const.STMTSTATUS_REPREPARE     = 5
+  const.STMTSTATUS_RUN           = 6
+  const.STMTSTATUS_MEMUSED       = 99
 
   -- Action codes
   const.CREATE_INDEX        = 1
@@ -437,6 +443,7 @@ function bind_clib()
       int (*)(void*,int,char**,char**), void*, char**
     );
     sqlite3_int64 sqlite3_last_insert_rowid(sqlite3*);
+    void sqlite3_set_last_insert_rowid(sqlite3*, sqlite3_int64);
   ]]
 
   function funcs.exec(db, sql, callback, arg1, errmsg)
@@ -452,6 +459,10 @@ function bind_clib()
 
   function funcs.last_insert_rowid(db)
     return clib.sqlite3_last_insert_rowid(db)
+  end
+
+  function funcs.set_last_insert_rowid(db, rowid)
+    clib.sqlite3_set_last_insert_rowid(db, rowid)
   end
 
 
@@ -623,6 +634,7 @@ function bind_clib()
   ffi.cdef [[
     int sqlite3_prepare(sqlite3*, const char*, int, sqlite3_stmt**, const char**);
     int sqlite3_prepare_v2(sqlite3*, const char*, int, sqlite3_stmt**, const char**);
+    int sqlite3_prepare_v3(sqlite3*, const char*, int, unsigned int, sqlite3_stmt**, const char**);
     int sqlite3_finalize(sqlite3_stmt*);
   ]]
 
@@ -639,6 +651,16 @@ function bind_clib()
   function funcs.prepare_v2(db, sql)
     local pstmt = ffi.new('sqlite3_stmt*[1]')
     local code  = clib.sqlite3_prepare_v2(db, sql, #sql, pstmt, nil);
+    if code == const.OK then
+      return code, pstmt[0]
+    else
+      return code, nil
+    end
+  end
+
+  function funcs.prepare_v3(db, sql, flags)
+    local pstmt = ffi.new('sqlite3_stmt*[1]')
+    local code  = clib.sqlite3_prepare_v3(db, sql, #sql, flags, pstmt, nil);
     if code == const.OK then
       return code, pstmt[0]
     else
@@ -741,6 +763,7 @@ function bind_clib()
     int sqlite3_bind_null(sqlite3_stmt*, int);
     int sqlite3_bind_text(sqlite3_stmt*, int, const char*, int, void(*)(void*));
     int sqlite3_bind_value(sqlite3_stmt*, int, const sqlite3_value*);
+    int sqlite3_bind_pointer(sqlite3_stmt*, int, void*, const char*, void(*)(void*));
     int sqlite3_bind_zeroblob(sqlite3_stmt*, int, int);
     int sqlite3_bind_zeroblob64(sqlite3_stmt*, int, sqlite3_uint64);
   ]]
@@ -778,6 +801,10 @@ function bind_clib()
 
   function funcs.bind_value(stmt, index, value)
     return clib.sqlite3_bind_value(stmt, index, value)
+  end
+
+  function funcs.bind_pointer(stmt, index, pointer, type, destructor)
+    return clib.sqlite3_bind_pointer(stmt, index, pointer, type, destructor)
   end
 
   function funcs.bind_zeroblob(stmt, index, size)
@@ -834,21 +861,17 @@ function bind_clib()
 
   ffi.cdef [[
     const void *sqlite3_column_blob(sqlite3_stmt*, int);
-    int sqlite3_column_bytes(sqlite3_stmt*, int);
     double sqlite3_column_double(sqlite3_stmt*, int);
     int sqlite3_column_int(sqlite3_stmt*, int);
     sqlite3_int64 sqlite3_column_int64(sqlite3_stmt*, int);
     const unsigned char *sqlite3_column_text(sqlite3_stmt*, int);
-    int sqlite3_column_type(sqlite3_stmt*, int);
     sqlite3_value *sqlite3_column_value(sqlite3_stmt*, int);
+    int sqlite3_column_bytes(sqlite3_stmt*, int);
+    int sqlite3_column_type(sqlite3_stmt*, int);
   ]]
 
   function funcs.column_blob(stmt, column)
     return clib.sqlite3_column_blob(stmt, column)
-  end
-
-  function funcs.column_bytes(stmt, column)
-    return clib.sqlite3_column_bytes(stmt, column)
   end
 
   function funcs.column_double(stmt, column)
@@ -867,12 +890,16 @@ function bind_clib()
     return aux.wrap_string(clib.sqlite3_column_text(stmt, column))
   end
 
-  function funcs.column_type(stmt, column)
-    return clib.sqlite3_column_type(stmt, column)
-  end
-
   function funcs.column_value(stmt, column)
     return clib.sqlite3_column_value(stmt, column)
+  end
+
+  function funcs.column_bytes(stmt, column)
+    return clib.sqlite3_column_bytes(stmt, column)
+  end
+
+  function funcs.column_type(stmt, column)
+    return clib.sqlite3_column_type(stmt, column)
   end
 
 
@@ -898,21 +925,18 @@ function bind_clib()
 
   ffi.cdef [[
     const void *sqlite3_value_blob(sqlite3_value*);
-    int sqlite3_value_bytes(sqlite3_value*);
     double sqlite3_value_double(sqlite3_value*);
     int sqlite3_value_int(sqlite3_value*);
     sqlite3_int64 sqlite3_value_int64(sqlite3_value*);
+    void *sqlite3_value_pointer(sqlite3_value*, const char*);
     const unsigned char *sqlite3_value_text(sqlite3_value*);
+    int sqlite3_value_bytes(sqlite3_value*);
     int sqlite3_value_type(sqlite3_value*);
     int sqlite3_value_numeric_type(sqlite3_value*);
   ]]
 
   function funcs.value_blob(value)
     return clib.sqlite3_value_blob(value)
-  end
-
-  function funcs.value_bytes(value)
-    return clib.sqlite3_value_bytes(value)
   end
 
   function funcs.value_double(value)
@@ -927,8 +951,16 @@ function bind_clib()
     return clib.sqlite3_value_int64(value)
   end
 
+  function funcs.value_pointer(value, type)
+    return clib.sqlite3_value_pointer(value, type)
+  end
+
   function funcs.value_text(value)
     return aux.wrap_string(clib.sqlite3_value_text(value))
+  end
+
+  function funcs.value_bytes(value)
+    return clib.sqlite3_value_bytes(value)
   end
 
   function funcs.value_type(value)
@@ -983,6 +1015,7 @@ function bind_clib()
     void sqlite3_result_null(sqlite3_context*);
     void sqlite3_result_text(sqlite3_context*, const char*, int, void(*)(void*));
     void sqlite3_result_value(sqlite3_context*, sqlite3_value*);
+    void sqlite3_result_pointer(sqlite3_context*, void*, const char*, void(*)(void*));
     void sqlite3_result_zeroblob(sqlite3_context*, int);
     int sqlite3_result_zeroblob64(sqlite3_context*, sqlite3_uint64);
   ]]
@@ -1041,6 +1074,10 @@ function bind_clib()
 
   function funcs.result_value(context, value)
     clib.sqlite3_result_value(context, value)
+  end
+
+  function funcs.result_pointer(context, pointer, type, destructor)
+    clib.sqlite3_result_pointer(context, pointer, type, destructor)
   end
 
   function funcs.result_zeroblob(context, size)
