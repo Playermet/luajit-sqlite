@@ -36,6 +36,8 @@ local aux = {} -- Auxiliary utils
 local args -- Arguments for binding
 local clib -- C library namespace
 
+local is_luajit = pcall(require, 'jit')
+
 
 local load_clib, bind_clib -- Forward declaration
 
@@ -287,7 +289,9 @@ function bind_clib()
   const.TRACE_CLOSE   = 0x08
 
   -- For C pointers comparison
-  const.NULL = ffi.NULL
+  if not is_luajit then
+    const.NULL = ffi.C.NULL
+  end
 
   -----------------------------------------------------------
   --  Types
@@ -1148,7 +1152,7 @@ function bind_clib()
       end
     end
 
-    function funcs.stmt_iter(db, sql)
+    function funcs.using_stmt_iter(db, sql)
       local code, stmt = funcs.prepare_v2(db, sql)
       if code == const.OK then
         return stmt_next, stmt
@@ -1166,6 +1170,7 @@ function bind_clib()
         func(stmt)
       elseif code == const.DONE then
         funcs.reset(stmt)
+        return code
       else
         return code
       end
@@ -1181,6 +1186,10 @@ function bind_clib()
     else
       return nil, code
     end
+  end
+
+  function funcs.stmt_iter(stmt)
+    return funcs.stmt_next, stmt
   end
 
 
@@ -1285,9 +1294,10 @@ function bind_clib()
   sqlite3_mt.execf           = funcs.execf
   sqlite3_mt.using_stmt      = funcs.using_stmt
   sqlite3_mt.using_stmt_loop = funcs.using_stmt_loop
-  sqlite3_mt.stmt_iter       = funcs.stmt_iter
+  sqlite3_mt.using_stmt_iter = funcs.using_stmt_iter
   sqlite3_stmt_mt.next       = funcs.stmt_next
   sqlite3_stmt_mt.loop       = funcs.stmt_loop
+  sqlite3_stmt_mt.iter       = funcs.stmt_iter
 
   -----------------------------------------------------------
   --  Finalize types metatables
@@ -1317,9 +1327,16 @@ function aux.set_mt_method(t,k,v)
   end
 end
 
-function aux.is_null(c_ptr)
-  -- Works both for luajit and luaffi
-  return c_ptr == ffi.NULL
+if is_luajit then
+  -- LuaJIT way to compare with NULL
+  function aux.is_null(ptr)
+    return ptr == nil
+  end
+else
+  -- LuaFFI way to compare with NULL
+  function aux.is_null(ptr)
+    return ptr == ffi.C.NULL
+  end
 end
 
 function aux.wrap_string(c_str)

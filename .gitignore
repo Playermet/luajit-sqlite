@@ -2,3 +2,4 @@
 *.exe
 *.sublime-project
 *.sublime-workspace
+*.db
