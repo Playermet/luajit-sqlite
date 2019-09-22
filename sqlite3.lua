@@ -1,5 +1,5 @@
 -----------------------------------------------------------
---  Binding for SQLite v3.20.1
+--  Binding for SQLite v3.29.0
 -----------------------------------------------------------
 
 --[[ LICENSE
@@ -7,7 +7,7 @@
 
   luajit-sqlite - SQLite binding for LuaJIT
 
-  Copyright (c) 2017 Playermet
+  Copyright (c) 2019 Playermet
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -29,6 +29,7 @@
 ]]
 
 local ffi = require 'ffi'
+local bit = require 'bit'
 
 local mod = {} -- Lua module namespace
 local aux = {} -- Auxiliary utils
@@ -135,6 +136,9 @@ function bind_clib()
   const.DONE        = 101
 
   -- Extended Result Codes
+  const.ERROR_MISSING_COLLSEQ   = bit.bor(const.ERROR,      bit.lshift(1, 8))
+  const.ERROR_RETRY             = bit.bor(const.ERROR,      bit.lshift(2, 8))
+  const.ERROR_SNAPSHOT          = bit.bor(const.ERROR,      bit.lshift(3, 8))
   const.IOERR_READ              = bit.bor(const.IOERR,      bit.lshift(1, 8))
   const.IOERR_SHORT_READ        = bit.bor(const.IOERR,      bit.lshift(2, 8))
   const.IOERR_WRITE             = bit.bor(const.IOERR,      bit.lshift(3, 8))
@@ -163,18 +167,26 @@ function bind_clib()
   const.IOERR_CONVPATH          = bit.bor(const.IOERR,      bit.lshift(26, 8))
   const.IOERR_VNODE             = bit.bor(const.IOERR,      bit.lshift(27, 8))
   const.IOERR_AUTH              = bit.bor(const.IOERR,      bit.lshift(28, 8))
+  const.IOERR_BEGIN_ATOMIC      = bit.bor(const.IOERR,      bit.lshift(29, 8))
+  const.IOERR_COMMIT_ATOMIC     = bit.bor(const.IOERR,      bit.lshift(30, 8))
+  const.IOERR_ROLLBACK_ATOMIC   = bit.bor(const.IOERR,      bit.lshift(31, 8))
   const.LOCKED_SHAREDCACHE      = bit.bor(const.LOCKED,     bit.lshift(1, 8))
+  const.LOCKED_VTAB             = bit.bor(const.LOCKED,     bit.lshift(2, 8))
   const.BUSY_RECOVERY           = bit.bor(const.BUSY,       bit.lshift(1, 8))
   const.BUSY_SNAPSHOT           = bit.bor(const.BUSY,       bit.lshift(2, 8))
   const.CANTOPEN_NOTEMPDIR      = bit.bor(const.CANTOPEN,   bit.lshift(1, 8))
   const.CANTOPEN_ISDIR          = bit.bor(const.CANTOPEN,   bit.lshift(2, 8))
   const.CANTOPEN_FULLPATH       = bit.bor(const.CANTOPEN,   bit.lshift(3, 8))
   const.CANTOPEN_CONVPATH       = bit.bor(const.CANTOPEN,   bit.lshift(4, 8))
+  const.CANTOPEN_DIRTYWAL       = bit.bor(const.CANTOPEN,   bit.lshift(5, 8))
   const.CORRUPT_VTAB            = bit.bor(const.CORRUPT,    bit.lshift(1, 8))
+  const.CORRUPT_SEQUENCE        = bit.bor(const.CORRUPT,    bit.lshift(2, 8))
   const.READONLY_RECOVERY       = bit.bor(const.READONLY,   bit.lshift(1, 8))
   const.READONLY_CANTLOCK       = bit.bor(const.READONLY,   bit.lshift(2, 8))
   const.READONLY_ROLLBACK       = bit.bor(const.READONLY,   bit.lshift(3, 8))
   const.READONLY_DBMOVED        = bit.bor(const.READONLY,   bit.lshift(4, 8))
+  const.READONLY_CANTINIT       = bit.bor(const.READONLY,   bit.lshift(5, 8))
+  const.READONLY_DIRECTORY      = bit.bor(const.READONLY,   bit.lshift(6, 8))
   const.ABORT_ROLLBACK          = bit.bor(const.ABORT,      bit.lshift(2, 8))
   const.CONSTRAINT_CHECK        = bit.bor(const.CONSTRAINT, bit.lshift(1, 8))
   const.CONSTRAINT_COMMITHOOK   = bit.bor(const.CONSTRAINT, bit.lshift(2, 8))
@@ -230,6 +242,8 @@ function bind_clib()
 
   -- Prepare Flags for sqlite3_prepare_v3
   const.PREPARE_PERSISTENT = 0x01
+  const.PREPARE_NORMALIZE  = 0x02
+  const.PREPARE_NO_VTAB    = 0x03
 
   -- Codes for fundamental types
   const.INTEGER = 1
@@ -709,6 +723,7 @@ function bind_clib()
     int sqlite3_stmt_busy(sqlite3_stmt*);
     int sqlite3_stmt_readonly(sqlite3_stmt*);
     int sqlite3_stmt_status(sqlite3_stmt*, int, int);
+    int sqlite3_stmt_isexplain(sqlite3_stmt *pStmt);
   ]]
 
   function funcs.stmt_busy(stmt)
@@ -723,11 +738,16 @@ function bind_clib()
     return clib.sqlite3_stmt_status(stmt, parameter_code, reset_flag)
   end
 
+  function funcs.stmt_isexplain(stmt)
+    return aux.wrap_bool(clib.sqlite3_stmt_isexplain(stmt))
+  end
+
 
 
   ffi.cdef [[
     const char *sqlite3_sql(sqlite3_stmt*);
     char *sqlite3_expanded_sql(sqlite3_stmt*);
+    const char *sqlite3_normalized_sql(sqlite3_stmt *pStmt);
   ]]
 
   function funcs.sql(stmt)
@@ -739,6 +759,10 @@ function bind_clib()
     local lstr = ffi.string(cstr)
     clib.sqlite3_free(cstr)
     return lstr
+  end
+
+  function funcs.normalized_sql(stmt)
+    return aux.wrap_string(clib.sqlite3_normalized_sql(stmt))
   end
 
 
@@ -940,6 +964,8 @@ function bind_clib()
     int sqlite3_value_bytes(sqlite3_value*);
     int sqlite3_value_type(sqlite3_value*);
     int sqlite3_value_numeric_type(sqlite3_value*);
+    int sqlite3_value_nochange(sqlite3_value*);
+    int sqlite3_value_frombind(sqlite3_value*);
   ]]
 
   function funcs.value_blob(value)
@@ -976,6 +1002,14 @@ function bind_clib()
 
   function funcs.value_numeric_type(value)
     return clib.sqlite3_value_numeric_type(value)
+  end
+
+  function funcs.value_nochange(value)
+    return clib.sqlite3_value_nochange(value)
+  end
+
+  function funcs.value_frombind(value)
+    return clib.sqlite3_value_frombind(value)
   end
 
 
@@ -1226,8 +1260,10 @@ function bind_clib()
   sqlite3_stmt_mt.busy                 = funcs.stmt_busy
   sqlite3_stmt_mt.readonly             = funcs.stmt_readonly
   sqlite3_stmt_mt.status               = funcs.stmt_status
+  sqlite3_stmt_mt.isexplain            = funcs.stmt_isexplain
   sqlite3_stmt_mt.sql                  = funcs.sql
   sqlite3_stmt_mt.expanded_sql         = funcs.expanded_sql
+  sqlite3_stmt_mt.normalized_sql       = funcs.normalized_sql
   sqlite3_stmt_mt.bind_parameter_count = funcs.bind_parameter_count
   sqlite3_stmt_mt.bind_parameter_name  = funcs.bind_parameter_name
   sqlite3_stmt_mt.bind_parameter_index = funcs.bind_parameter_index
@@ -1268,6 +1304,8 @@ function bind_clib()
   sqlite3_value_mt.text         = funcs.value_text
   sqlite3_value_mt.type         = funcs.value_type
   sqlite3_value_mt.numeric_type = funcs.value_numeric_type
+  sqlite3_value_mt.nochange     = funcs.value_nochange
+  sqlite3_value_mt.frombind     = funcs.value_frombind
 
   sqlite3_context_mt.db_handle           = funcs.context_db_handle
   sqlite3_context_mt.user_data           = funcs.user_data
