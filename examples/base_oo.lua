@@ -1,4 +1,4 @@
-local sqlite = require '../sqlite3' ('sqlite3')
+local sqlite = require 'sqlite3' ('sqlite3')
 local SQLITE = sqlite.const
 
 local code, db = sqlite.open(':memory:')
