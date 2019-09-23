@@ -261,6 +261,10 @@ function bind_clib()
   const.STMTSTATUS_RUN           = 6
   const.STMTSTATUS_MEMUSED       = 99
 
+  -- Authorizer Return Codes
+  const.DENY   = 1
+  const.IGNORE = 2
+
   -- Action codes
   const.CREATE_INDEX        = 1
   const.CREATE_TABLE        = 2
@@ -516,14 +520,11 @@ function bind_clib()
     return clib.sqlite3_limit(db, limit_code, value or -1)
   end
 
-  ffi.cdef [[ int sqlite3_busy_timeout(sqlite3*, int); ]]
-  function funcs.limit(db, time_ms)
-    return clib.sqlite3_limit(db, time_ms or -1)
-  end
 
   ffi.cdef [[
     void sqlite3_progress_handler(sqlite3*, int, int(*)(void*), void*);
     int sqlite3_busy_handler(sqlite3*, int(*)(void*,int), void*);
+    int sqlite3_busy_timeout(sqlite3*, int);
   ]]
 
   function funcs.progress_handler(db, period, func, arg1)
@@ -532,6 +533,10 @@ function bind_clib()
 
   function funcs.busy_handler(db, func, arg1)
     return clib.sqlite3_busy_handler(db, func, arg1)
+  end
+
+  function funcs.busy_timeout(db, time_ms)
+    return clib.sqlite3_busy_timeout(db, time_ms or -1)
   end
 
 
@@ -592,6 +597,9 @@ function bind_clib()
   ffi.cdef [[
     int sqlite3_changes(sqlite3*);
     int sqlite3_total_changes(sqlite3*);
+    void sqlite3_interrupt(sqlite3*);
+    int sqlite3_get_autocommit(sqlite3*);
+    int sqlite3_complete(const char *sql);
   ]]
 
   function funcs.changes(db)
@@ -602,6 +610,17 @@ function bind_clib()
     return clib.sqlite3_total_changes(db)
   end
 
+  function funcs.interrupt(db)
+    clib.sqlite3_interrupt(db)
+  end
+
+  function funcs.get_autocommit(db)
+    return aux.wrap_bool(clib.sqlite3_get_autocommit(db))
+  end
+
+  function funcs.complete(sql)
+    return aux.wrap_bool(clib.sqlite3_complete(sql))
+  end
 
 
   ffi.cdef [[
@@ -694,9 +713,23 @@ function bind_clib()
   end
 
 
-  ffi.cdef [[ sqlite3 *sqlite3_db_handle(sqlite3_stmt*); ]]
+  ffi.cdef [[
+    sqlite3 *sqlite3_db_handle(sqlite3_stmt*);
+    const char *sqlite3_db_filename(sqlite3 *db, const char *zDbName);
+    int sqlite3_db_readonly(sqlite3 *db, const char *zDbName);
+  ]]
+
   function funcs.db_handle(stmt)
     return clib.sqlite3_db_handle(stmt)
+  end
+
+  function funcs.db_filename(db, name)
+    return aux.wrap_string(clib.sqlite3_db_filename(db, name))
+  end
+
+  function funcs.db_readonly(db, name)
+    -- returns -1, 0, 1
+    return clib.sqlite3_db_readonly(db, name)
   end
 
 
@@ -1236,9 +1269,9 @@ function bind_clib()
   sqlite3_mt.extended_errcode      = funcs.extended_errcode
   sqlite3_mt.errmsg                = funcs.errmsg
   sqlite3_mt.limit                 = funcs.limit
-  sqlite3_mt.limit                 = funcs.limit
   sqlite3_mt.progress_handler      = funcs.progress_handler
   sqlite3_mt.busy_handler          = funcs.busy_handler
+  sqlite3_mt.busy_timeout          = funcs.busy_timeout
   sqlite3_mt.commit_hook           = funcs.commit_hook
   sqlite3_mt.rollback_hook         = funcs.rollback_hook
   sqlite3_mt.update_hook           = funcs.update_hook
@@ -1247,10 +1280,14 @@ function bind_clib()
   sqlite3_mt.trace_v2              = funcs.trace_v2
   sqlite3_mt.changes               = funcs.changes
   sqlite3_mt.total_changes         = funcs.total_changes
+  sqlite3_mt.interrupt             = funcs.interrupt
+  sqlite3_mt.get_autocommit        = funcs.get_autocommit
   sqlite3_mt.table_column_metadata = funcs.table_column_metadata
   sqlite3_mt.next_stmt             = funcs.next_stmt
   sqlite3_mt.prepare               = funcs.prepare
   sqlite3_mt.prepare_v2            = funcs.prepare_v2
+  sqlite3_mt.db_filename           = funcs.db_filename
+  sqlite3_mt.db_readonly           = funcs.db_readonly
 
   sqlite3_stmt_mt.finalize             = funcs.finalize
   sqlite3_stmt_mt.db_handle            = funcs.db_handle
